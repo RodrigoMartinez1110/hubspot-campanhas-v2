@@ -7,6 +7,21 @@ import plotly.graph_objects as go
 from datetime import timedelta
 from graficos import aplicar_estilo_kpi, exibir_kpis
 
+# Função para download do DataFrame
+def download_button(df, filename="dados.csv"):
+    # Convertendo o DataFrame para CSV
+    csv = df.to_csv(index=False)
+    # Convertendo o CSV para o formato adequado para download
+    csv_bytes = csv.encode()
+
+    # Botão de download
+    st.download_button(
+        label="Baixar dados",
+        data=csv_bytes,
+        file_name=filename,
+        mime="text/csv"
+    )
+
 # Configurações iniciais
 st.set_page_config(layout="wide")
 st.title('Analisar Geração de Leads')
@@ -31,6 +46,7 @@ def carregar_arquivos(arquivos):
             df_gasto = limpeza.tratar_arquivo_pagos(df_gasto)
     return df, df_gasto
 
+
 # Uploads
 st.sidebar.header("Upload dos Arquivos")
 arquivos = st.sidebar.file_uploader("Envie os arquivos CSV", type="csv", accept_multiple_files=True)
@@ -54,37 +70,61 @@ if df is not None and df_gasto is not None:
         'equipe': multiselect_com_default("Equipe", df['equipe'].unique()),
         'produto': multiselect_com_default("Produto", df['produto'].unique()),
         'convenio_acronimo': multiselect_com_default("Convênio", df['convenio_acronimo'].unique()),
-        'etapa': multiselect_com_default("Etapa", df['etapa'].unique()),
         'origem': multiselect_com_default("Canal", df['origem'].unique())
     }
+
+    # Filtro de Etapa com base nas datas
+    st.sidebar.subheader("Escolha a etapa para análise")
+    etapa_filtro = st.sidebar.selectbox(
+        "Selecione a etapa que deseja analisar:",
+        options=["Lead", "Negociação", "Contratação", "Pago", "Perda"],
+        format_func=lambda x: x
+    )
 
     with st.sidebar.expander('Filtro Data'):
         data_inicio = st.date_input('Data de início', df['data'].min())
         data_fim = st.date_input('Data de fim', df['data'].max())
 
-    df_filtrado = df[
-        (df['data'] >= data_inicio) & (df['data'] <= data_fim) &
-        (df['equipe'].isin(filtros['equipe'])) &
-        (df['produto'].isin(filtros['produto'])) &
-        (df['convenio_acronimo'].isin(filtros['convenio_acronimo'])) &
-        (df['etapa'].isin(filtros['etapa'])) &
-        (df['origem'].isin(filtros['origem']))
+
+    # Aplicando filtros adicionais com base nas datas e outros critério
+    df_filtrado = df_filtrado[
+        (df_filtrado['data'] >= data_inicio) & 
+        (df_filtrado['data'] <= data_fim) & 
+        (df_filtrado['equipe'].isin(filtros['equipe'])) & 
+        (df_filtrado['produto'].isin(filtros['produto'])) & 
+        (df_filtrado['convenio_acronimo'].isin(filtros['convenio_acronimo'])) & 
+        (df_filtrado['origem'].isin(filtros['origem']))
     ]
 
+    # Corrigindo possíveis valores inválidos nas datas de etapa
+    colunas_datas = ['data_negociacao', 'data_perda', 'data_contratacao', 'data_pago', 'data']
+
+    # Filtrando df_filtrado com base na etapa selecionada
+    if etapa_filtro == "Lead":
+        df_filtrado = df_filtrado[df_filtrado['data'].notna()]    
+    elif etapa_filtro == "Negociação":
+        df_filtrado = df_filtrado[df_filtrado['data_negociacao'].notna()]
+    elif etapa_filtro == "Perda":
+        df_filtrado = df_filtrado[df_filtrado['data_perda'].notna()]
+    elif etapa_filtro == "Contratação":
+        df_filtrado = df_filtrado[df_filtrado['data_contratacao'].notna()]
+    elif etapa_filtro == "Pago":
+        df_filtrado = df_filtrado[df_filtrado['data_pago'].notna()]
+    
 
     df_gasto = df_gasto[
-        (df_gasto['data'] >= data_inicio) & (df_gasto['data'] <= data_fim) &
-        (df_gasto['Convênio'].isin(filtros['convenio_acronimo'])) &
-        (df_gasto['Produto'].isin(filtros['produto'])) &
-        (df_gasto['Equipe'].isin(filtros['equipe'])) &
+        (df_gasto['data'] >= data_inicio) & (df_gasto['data'] <= data_fim) & 
+        (df_gasto['Convênio'].isin(filtros['convenio_acronimo'])) & 
+        (df_gasto['Produto'].isin(filtros['produto'])) & 
+        (df_gasto['Equipe'].isin(filtros['equipe'])) & 
         (df_gasto['Canal'].isin(filtros['origem']))
     ]
 
-
+    # Filtrar por dias úteis
     df_filtrado = limpeza.filtrar_dias_uteis(df_filtrado, data_inicio, data_fim, considerar_dias_uteis)
     df_gasto = limpeza.filtrar_dias_uteis(df_gasto, data_inicio, data_fim, considerar_dias_uteis)
 
-    
+    # Custos unitários e cálculo de gastos
     custos_unitarios = {'SMS': 0.048, 'RCS': 0.105, 'HYPERFLOW': 0.047, 'Whatsapp': 0.046}
     gastos = (
         df_gasto.groupby(['Equipe', 'Convênio', 'Produto', 'Canal', ])['Quantidade']
@@ -92,7 +132,6 @@ if df is not None and df_gasto is not None:
         .reset_index()
     )
 
-    gastos
     gastos['valor_pago'] = gastos['Canal'].map(custos_unitarios) * gastos['Quantidade']
     gastos['valor_pago'] = gastos['valor_pago'].round(2)
 
@@ -183,3 +222,17 @@ if df is not None and df_gasto is not None:
     with st.expander("Perdas por Etapa"):
         fig = perdas_por_etapa(df_filtrado)
         st.plotly_chart(fig)
+
+    
+    from graficos import grafico_leads_por_10k
+    with st.expander("Leads estimados por 10k disparos"):
+        top_n = st.slider("Quantos convênios deseja visualizar?", 5, 40, 10, 1)
+        tipo_ordem = st.selectbox("Ordenar por:", ["maiores", "menores"])
+        maiores = tipo_ordem == "maiores"
+
+        fig, merged_final = grafico_leads_por_10k(df_filtrado, df_gasto, top_n=top_n, maiores=maiores)
+        st.plotly_chart(fig, use_container_width=True)
+        st.write(merged_final)
+
+        # Adicionando o botão de download
+        download_button(merged_final, filename="leads_por_10k.csv")

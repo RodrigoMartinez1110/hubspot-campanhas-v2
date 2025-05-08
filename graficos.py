@@ -696,3 +696,91 @@ def perdas_por_etapa(df_filtrado):
     )
 
     return fig
+
+def grafico_leads_por_10k(df_filtrado, df_gasto, top_n=10, maiores=True):
+    # Agrupamentos
+    grouped_gastos = df_gasto.groupby(['Convênio', 'Produto', 'Canal'])['Quantidade'].sum().reset_index(name='quantidade_disparada')
+    grouped_hubspot = df_filtrado.groupby(['convenio_acronimo', 'produto', 'origem']).agg({
+            'id': 'count',
+            'comissao_paga': 'sum'
+        }).reset_index().rename(columns={
+            'id': 'quantidade_gerada',
+            'comissao_paga': 'comissao_total'
+        })
+
+    # Merge
+    merged = grouped_gastos.merge(
+        grouped_hubspot,
+        left_on=['Convênio', 'Produto', 'Canal'],
+        right_on=['convenio_acronimo', 'produto', 'origem'],
+        how='inner'
+    )
+
+    # Conversão
+    merged['conversao'] = ((merged['quantidade_gerada'] / merged['quantidade_disparada']) * 100).round(2)
+
+    # Agregado final (conversão)
+    merged_final = merged.groupby(['Convênio', 'Produto', 'Canal'])['conversao'].agg(['median', 'mean']).reset_index()
+    merged_final['leads_por_10k'] = (merged_final['median'] / 100) * 10_000
+    merged_final['conv_prod'] = merged_final['Convênio'] + ' - ' + merged_final['Produto']
+    
+    # Adicionar a quantidade_disparada novamente ao merged_final
+    merged_final['quantidade_disparada'] = merged['quantidade_disparada'].groupby([merged['Convênio'], merged['Produto'], merged['Canal']]).transform('sum')
+
+    # Agregado de comissão
+    comissao_agg = df_filtrado.groupby(['convenio_acronimo', 'produto', 'origem'])['comissao_paga'].sum().reset_index()
+    comissao_agg.rename(columns={
+        'convenio_acronimo': 'Convênio',
+        'produto': 'Produto',
+        'origem': 'Canal',
+        'comissao_paga': 'comissao_total'
+    }, inplace=True)
+
+    # Merge com comissão
+    merged_final = merged_final.merge(
+        comissao_agg,
+        on=['Convênio', 'Produto', 'Canal'],
+        how='left'
+    )
+
+    # Preencher nulos com 0 caso não haja comissão registrada
+    merged_final['comissao_total'] = merged_final['comissao_total'].round(2)
+    merged_final['leads_por_10k'] = merged_final['leads_por_10k'].round(2)
+    merged_final['comissao_total'] = merged_final['comissao_total'].fillna(0)
+
+    # Calcular o gasto (RCS ou SMS) baseado no Canal
+    custo_por_canal = {'RCS': 0.105, 'SMS': 0.047}
+    merged_final['gasto'] = (merged_final['Canal'].map(custo_por_canal) * merged_final['quantidade_disparada']).round(2)
+    merged_final['ROI'] = ((merged_final['comissao_total'] / merged_final['gasto']) * 100).round(2)
+
+    # Ordenar
+    merged_final = merged_final.sort_values('leads_por_10k', ascending=not maiores).head(top_n)
+    
+    # Gráfico
+    fig = px.bar(
+        merged_final,
+        x='leads_por_10k',
+        y='conv_prod',
+        orientation='h',
+        text='leads_por_10k',
+        color='Canal',
+        labels={
+            'leads_por_10k': 'Leads estimados por 10k disparos',
+            'conv_prod': 'Convênio - Produto'
+        },
+        title='Leads estimados por 10k disparos (com base na conversão mediana)'
+    )
+
+    fig.update_traces(
+        texttemplate='%{text:.2f}',
+        textposition='outside'
+    )
+
+    fig.update_layout(
+        height=600,
+        xaxis_title="Leads por 10k disparos",
+        yaxis_title="",
+        font=dict(size=14)
+    )
+
+    return fig, merged_final

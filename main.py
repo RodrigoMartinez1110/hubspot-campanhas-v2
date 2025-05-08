@@ -76,8 +76,8 @@ if df is not None and df_gasto is not None:
         (df_gasto['data'] >= data_inicio) & (df_gasto['data'] <= data_fim) &
         (df_gasto['Convênio'].isin(filtros['convenio_acronimo'])) &
         (df_gasto['Produto'].isin(filtros['produto'])) &
-
-        (df_gasto['Equipe'].isin(filtros['equipe']))
+        (df_gasto['Equipe'].isin(filtros['equipe'])) &
+        (df_gasto['Canal'].isin(filtros['origem']))
     ]
 
 
@@ -91,6 +91,8 @@ if df is not None and df_gasto is not None:
         .sum()
         .reset_index()
     )
+
+    gastos
     gastos['valor_pago'] = gastos['Canal'].map(custos_unitarios) * gastos['Quantidade']
     gastos['valor_pago'] = gastos['valor_pago'].round(2)
 

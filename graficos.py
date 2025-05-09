@@ -720,7 +720,11 @@ def grafico_leads_por_10k(df_filtrado, df_gasto, top_n=10, maiores=True):
     merged['conversao'] = ((merged['quantidade_gerada'] / merged['quantidade_disparada']) * 100).round(2)
 
     # Agregado final (conversão)
-    merged_final = merged.groupby(['Convênio', 'Produto', 'Canal'])['conversao'].agg(['median', 'mean']).reset_index()
+    merged_final = merged.groupby(['Convênio', 'Produto', 'Canal']).agg({
+        'conversao': ['median', 'mean'],
+        'quantidade_gerada': 'sum'
+    }).reset_index()
+    merged_final.columns = ['Convênio', 'Produto', 'Canal', 'median', 'mean', 'quantidade_gerada']
     merged_final['leads_por_10k'] = (merged_final['median'] / 100) * 10_000
     merged_final['conv_prod'] = merged_final['Convênio'] + ' - ' + merged_final['Produto']
     
